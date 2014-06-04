@@ -5,21 +5,30 @@ var typer = {
     textHolder: null,
     sentences_on_bottom: [],
     sentence_current:"",
-    time_between_chars: 8,
-    time_between_words: 15,
+    time_between_chars: 15,
+    time_between_words: 50,
     chance_of_misspell: 0.015,
+    starting_text: "ENTER any text to fake type here, or click button below to use space sample",
     current_top:0
 };
 
 typer.init = function(){
     typer.bottomCell = $("#bottom_cell");
     typer.topCellHolder = $("#top_cells");
-    typer.textHolder = $("#source_holder");
+    typer.textHolder = $("#source_holder")
+        .val(typer.starting_text);
     typer.addTopCell();
 
     $("#type_on")
         .on('click',function(){
-            typer.type_on();
+            var box_val = typer.textHolder.val();
+            if (box_val == typer.starting_text || box_val == "") {
+                box_val = $("#sample_text").text();
+            }
+            typer.textHolder.val(box_val);
+            typer.text_to_add = box_val;
+
+            typer.add_char_from_text();
         });
 
     var lazyResize = _.debounce(typer.resizeCells, 20);
@@ -39,17 +48,19 @@ typer.addTopCell = function(){
     return $tc2;
 };
 typer.resizeCells = function(){
-   _.each(typer.topCells, function($cell,i){
-        var total_width = $(document).width();
-        var num_cells = typer.topCells.length;
-        var cell_width = parseInt((total_width / num_cells)-20);
-        $cell.width(cell_width);
-    });
-};
-typer.type_on = function(){
-    typer.text_to_add = typer.textHolder.val();
+    var currSize = parseInt(typer.topCells[0].css('fontSize'));
+    var newSize = currSize-1;
+    if (newSize < 2) return;
 
-    typer.add_char_from_text();
+   _.each(typer.topCells, function($cell,i){
+        var total_width = $(document).width()-24;
+        var num_cells = typer.topCells.length;
+        var cell_width = parseInt((total_width / num_cells)-12);
+        $cell.outerWidth(cell_width);
+
+        $cell.css('fontSize',newSize);
+    });
+
 };
 typer.randomChar = function(){
     var chars = " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:;[]';";
@@ -69,33 +80,58 @@ typer.randomChar = function(){
 
 typer.add_char_from_text = function(){
     if (typer.text_to_add && typer.text_to_add.length) {
+        if (!typer.start_timer) {
+            typer.start_timer =  new Date().getTime();
+        }
         var char = typer.text_to_add.substr(0,1);
-        typer.text_to_add = typer.text_to_add.substr(1);
+        var charSize = 1;
+        if (char==" "){
+            var stillSpace=true;
+            while (stillSpace && charSize < 40) {
+                var nextChar = typer.text_to_add.substr(charSize,1);
+                if (nextChar==" "){
+                    char+=nextChar;
+                    charSize++;
+                } else {
+                    stillSpace = false;
+                }
+            }
+        }
 
         var time_to_delay = typer.get_delay_time(char);
 
         //Do Misspellings
         if (!typer.isSpacer(char) && Math.random() < typer.chance_of_misspell) {
-            time_to_delay *= 4;
             var t = typer.bottomCell.html() || "";
 
+            typer.bottomCell.html(t + typer.randomChar());
             setTimeout(function(){
-                typer.bottomCell.html(t + typer.randomChar());
-                setTimeout(function(){
-                   typer.bottomCell.html(t);
-                },time_to_delay);
-            },time_to_delay);
-            time_to_delay *=3;
+               typer.bottomCell.html(t);
+               setTimeout(function(){typer.add_char_from_text()},time_to_delay*4);
+            },time_to_delay*2);
+        } else {
+            typer.text_to_add = typer.text_to_add.substr(charSize);
+            typer.add_char(char);
+            setTimeout(function(){typer.add_char_from_text()},time_to_delay);
         }
 
-        typer.add_char(char);
-        setTimeout(function(){typer.add_char_from_text()},time_to_delay);
+    } else {
+        if (typer.start_timer) {
+            //Text finished drawing
+            var end = new Date().getTime();
+            var time = end - typer.start_timer;
+            time = time / 1000;
+            typer.start_timer = null;
+            $("#type_on").val("Type This - Last took: "+time+" seconds");
+        }
     }
 };
 typer.isSpacer = function(char){
+    char = char.substr(0,1);
     return (char == " " || char == "\t" || char == "\n" || char == ":" || char == "=");
 };
 typer.get_delay_time = function(char){
+    char = char.substr(0,1);
     var spacing;
     if (typer.isSpacer(char)) {
         spacing = typer.time_between_words;
@@ -104,14 +140,6 @@ typer.get_delay_time = function(char){
     }
 
     return parseInt((spacing *.25) + (Math.random()*(spacing *.75)));
-};
-typer.make_top_cells_smaller_font = function(){
-    var currSize = parseInt(typer.topCells[0].css('fontSize'));
-    var newSize = currSize-1;
-    if (newSize < 2) return;
-    _.each(typer.topCells, function($cell,i){
-        $cell.css('fontSize',newSize);
-    });
 };
 typer.add_char = function(w){
     var t = typer.bottomCell.html() || "";
@@ -132,30 +160,27 @@ typer.add_char = function(w){
 
             var currTopHeight = currTop.height();
 
-//            rows = html.split("<br>");
-//            rowCount = 0;
-//            if (rows && rows.length) rowCount = rows.length;
-//
-//            if (rowCount > typer.top_cell_height) {
-            if (currTopHeight > 200) {
+            if (currTopHeight > 190) {
                 typer.current_top++;
                 if (typer.current_top>=typer.topCells.length) {
                     typer.addTopCell();
-
-                    typer.make_top_cells_smaller_font();
 
                     if (typer.current_top % 4==0){
                         typer.current_top=0;
                     }
 
                 }
+
+                var end = new Date().getTime();
+                var time = end - typer.start_timer;
+                time = time / 1000;
+                $("#type_on").val("Typing - So Far: "+time+" seconds");
             }
 
         }
         newLine = true;
-    } else if (w == " "){
-        w = "&nbsp;";
     }
+    w = w.replace(/ /g,"&nbsp;");
     typer.sentence_current += w;
 
     if (newLine) {

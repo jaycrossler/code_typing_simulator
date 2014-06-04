@@ -47,6 +47,671 @@
     <div id="top_cells"></div>
     <div id="bottom_cell"></div>
     <div><textarea id="source_holder" value="Text Goes Here"></textarea></div>
-    <input id="type_on" type="button" value="Type On"/>
+    <input id="type_on" type="button" value="Type This"/>
+    <div id="sample_text">
+from procyon.starsystemmaker.models import *
+from procyon.starsystemmaker.math_helpers import *
+from procyon.starsystemmaker.name_library import *
+from procyon.starcatalog.models import StarType, StarLuminosityType
+import csv
+import re
+import numpy
+
+with open('procyon/fixtures/star_spectrums.csv', mode='rU') as infile:
+    reader = csv.reader(infile,)
+    STAR_DICT = {rows[0]: rows[1] for rows in reader if len(rows) == 2}
+
+
+def get_star_type(stellar):
+    star_a, star_b, star_c, star_d = "", "", "", ""
+    if not stellar or len(stellar) < 1:
+        return star_a, star_b, star_c, star_d
+
+    stellar = stellar.lstrip('esd')
+
+    parts = re.findall(r'(\w)([-+]?[0-9]*\.?[0-9]*)[ ]*([IV]*)([a]?[b]?(\-0)?)', stellar)
+    if parts and len(parts) > 0 and len(parts[0]) > 0:
+        star_a = parts[0][0] or ""
+        star_a = star_a.upper()
+        star_b = parts[0][1] or 4
+        star_b = parse_num(star_b, True)
+        star_c = parts[0][2] or ""
+        star_d = parts[0][3] or ""
+
+    return star_a, star_b, star_c, star_d
+
+
+def color_of_star(star_a, star_b, star_c):
+
+    color = ""
+    cleaned = '{0}{1}{2}'.format(star_a, star_b, star_c)
+    for key in STAR_DICT:
+        if key.startswith(cleaned):
+            color = STAR_DICT.get(key)
+            break
+    if color == "" and star_a and star_b:
+        cleaned = '{0}{1}'.format(star_a, star_b)
+        for key in STAR_DICT:
+            if key.startswith(cleaned):
+                color = STAR_DICT.get(key)
+                break
+    if color == "" and star_a:
+        cleaned = star_a
+        for key in STAR_DICT:
+            if key.startswith(cleaned):
+                color = STAR_DICT.get(key)
+                break
+    if color == "":
+        color = "#ffc676"
+    return color
+
+
+def color_by_spectrum(stellar):
+    star_a, star_b, star_c, star_d = get_star_type(stellar)
+    return color_of_star(star_a, star_b, star_c)
+
+
+def closest_stars(item, star_model, distance=10, goal_count=140):
+    origin = item.location
+    origin_array = numpy.array((origin.x, origin.y, origin.z))
+
+    close_by_stars = star_model.objects.filter(location__distance_lte=(origin, D(m=distance))).distance(origin)
+    close_by_stars = close_by_stars.order_by('distance')
+
+    star_list = []
+    for s in close_by_stars:
+        location_array = numpy.array((s.location.x, s.location.y, s.location.z))
+
+        dist = numpy.linalg.norm(origin_array - location_array)
+        if dist > distance:
+            continue
+
+        star_handle = dict()
+        if s == item:
+            star_handle['centered'] = True
+        star_handle['name'] = s.star.__unicode__()
+        star_handle['id'] = s.star.id
+        star_handle['spectrum'] = s.star.spectrum
+        star_handle['web_color'] = color_by_spectrum(s.star.spectrum)
+        star_handle['x'] = s.location.x
+        star_handle['y'] = s.location.y
+        star_handle['z'] = s.location.z
+        star_handle['mass'] = s.guessed_mass or 0
+        star_handle['mag'] = s.star.mag or 0
+        star_handle['abs_mag'] = s.star.abs_mag or 0
+        star_handle['dist'] = dist
+        star_list.append(star_handle)
+
+    len_star_list = len(star_list)
+    if len_star_list < goal_count and distance < 40:
+        star_list = closest_stars(item, star_model, distance*2, goal_count)
+
+    star_list = sorted(star_list, key=lambda k: k['dist'])
+
+    return star_list
+
+
+def star_variables(options={}):
+
+    rand_seed = get_float_from_hash(options, 'rand_seed', numpy.random.random())
+    rand_seed_num = set_rand_seed(rand_seed)
+
+    forced_temp = get_float_from_hash(options, 'temp', 0)
+    forced_mass = get_float_from_hash(options, 'mass', 0)
+    forced_radius = get_float_from_hash(options, 'radius', 0)
+    forced_age = get_float_from_hash(options, 'age', 0)
+
+    temp = 0
+    mass = 0
+    radius = 0
+    age = 0
+    stellar = str(options.get('stellar', 'M3V'))
+
+    star_type = options.get('star_type', None)
+    star_l_type = options.get('luminosity_class', None)
+    star_l_mod = options.get('luminosity_mod', None)
+    star_color = ''
+
+    if stellar and not star_type and not star_l_type and not star_l_mod:
+        star_a, star_b, star_c, star_d = get_star_type(stellar)
+        try:
+            star_type = StarType.objects.get(symbol=star_a)
+        except Exception:
+            star_type = StarType.objects.get(symbol='M')
+        star_color = color_of_star(star_a, star_b, star_c)
+        try:
+            star_l_type = StarLuminosityType.objects.get(symbol=star_c)
+        except Exception:
+            star_l_type = None
+        star_l_mod = star_d
+
+    star_type_name = ''
+    if star_type:
+        if star_type.surface_temp_range:
+            temp = rand_range_from_text(star_type.surface_temp_range)
+        if star_type.mass_range:
+            mass = rand_range_from_text(star_type.mass_range)
+        if star_type.radius_range:
+            radius = rand_range_from_text(star_type.radius_range)
+        if star_type.age:
+            age = rand_range_from_text(star_type.age)
+        star_type_name = str(star_type.name)
+
+    star_l_type_name = ''
+    if star_l_type:
+        if star_l_type.temp_range:
+            temp = average_numbers_clamped(temp, rand_range_from_text(star_l_type.temp_range))
+        if star_l_type.mass_range:
+            mass = (mass or 1) * rand_range_from_text(star_l_type.mass_range)
+        if star_l_type.radius_range:
+            radius = average_numbers_clamped(radius, rand_range_from_text(star_l_type.radius_range))
+        star_l_type_name = str(star_l_type.short_name)
+
+    if star_l_mod and mass:
+        if star_l_mod == 'a-0':
+            mass *= 15
+        if star_l_mod == 'a':
+            mass *= 5
+        if star_l_mod == 'ab':
+            mass *= 3
+        if star_l_mod == 'b':
+            mass *= 1
+
+    age = bigger_makes_smaller(start=mass, start_min=0, start_max=10, end=age, end_min=1, end_max=11000,
+                               tries_to_adjust=5)
+
+    if forced_mass:
+        mass = forced_mass
+    if forced_temp:
+        temp = forced_temp
+    if forced_radius:
+        radius = forced_radius
+    if forced_age:
+        age = forced_age
+
+    return {'temp': temp, 'mass': mass, 'radius': radius, 'age': age, 'color': star_color,
+            'rand': rand_seed_num, 'stellar': stellar, 'star_type_name': star_type_name,
+            'luminosity_class': star_l_type_name, 'luminosity_mod': star_l_mod}
+
+
+def planet_from_variables(settings={}):
+    rand_seed = get_float_from_hash(settings, 'rand')
+    set_rand_seed(rand_seed)
+
+    mass = get_float_from_hash(settings, 'mass')
+    planet_count_max = (2+mass)*(2+mass)
+    planet_count_max = clamp(planet_count_max, 0, 20)
+    planet_count = rand_range(low=0, high=planet_count_max, weight=2, avg=4)
+    planet_count = int(planet_count)
+
+    planets = []
+
+    planet_name_list = list_of_names()
+
+    settings['name'] = planet_name_list[0]
+    settings['planets'] = planet_count
+    for i in range(planet_count):
+        planet_data = create_random_planet(settings, i+1, planet_name_list, rand_seed=rand_seed)
+        planets.append(planet_data)
+    settings['planet_data'] = planets
+
+    return settings
+
+
+def create_random_planet(settings={}, planet_num=1, planet_name_list=None, rand_seed=''):
+    num_planets = settings['planets']
+    if not planet_name_list:
+        planet_name_list = list_of_names()
+
+    if len(planet_name_list) > planet_num:
+        name = planet_name_list[planet_num]
+    else:
+        name = "Planet {0}".format(planet_num)
+
+    star_age = get_float_from_hash(settings, 'age', 5000)
+
+    #Keep Mass and Radius related, so that gravity won't be too high
+    mass_max = 2 + (planet_num * 2)
+    mass_max *= (mass_max/2)
+
+    #Make farther out planets smaller
+    if planet_num > 7:
+        mass_max /= 2
+    if planet_num > 11:
+        mass_max /= 2
+
+    mass = bigger_makes_bigger(start=star_age, start_min=0, start_max=12000,
+                               end=1, end_min=0.01, end_max=mass_max, tries_to_adjust=5)
+    radius = bigger_makes_bigger(start=mass, start_min=0.01, start_max=mass_max,
+                                 end=2, end_min=0.002, end_max=8, tries_to_adjust=4)
+    mass = clamp(mass, 0.01, radius*4.5)
+
+    density = bigger_makes_bigger(start=mass, start_min=0.01, start_max=mass_max,
+                                  end=5, end_min=0.6, end_max=10, tries_to_adjust=3)
+    gravity = mass/(radius*radius)
+
+    oblateness = rand_range(0, 0.1, 1, 0.04)
+    tilt = rand_range(0, 180, 1, 20)
+    albedo = rand_range(0, 1, 2, 0.2)
+    length_days = rand_range(0, 80, 2, 24)
+
+    craterization = 0
+    surface_ocean_amount = 0
+
+    ice_amount_total = 0
+    ice_amount_north_pole = 0
+    ice_amount_south_pole = 0
+
+    surface_temp_low = rand_range(-240, 200, 3, -100)
+    surface_temp_low = bigger_makes_smaller(start=planet_num, start_min=0, start_max=num_planets,
+                                            end=surface_temp_low, end_min=-240, end_max=200, tries_to_adjust=2)
+    surface_temp_high = rand_range(surface_temp_low, 400, 3, surface_temp_low+40)
+    surface_temp_mid = (surface_temp_high+surface_temp_low) / 2
+
+    if (radius * mass) > 8:
+        #Gas Giant
+        surface_solidity = 0
+        craterization = 0
+        ring_size = rand_range(0, 10, 2, 2)
+        ring_numbers = bigger_makes_bigger(start=ring_size, start_min=0, start_max=10,
+                                           end=4, end_min=1, end_max=12, tries_to_adjust=2)
+        ring_numbers = int(ring_numbers)
+        atmosphere_millibars = bigger_makes_bigger(start=gravity, start_min=0.01, start_max=5,
+                                                   end=1, end_min=0.1, end_max=20000, tries_to_adjust=2)
+        magnetic_field = bigger_makes_bigger(start=mass, start_min=0.01, start_max=mass_max,
+                                             end=1, end_min=0.1, end_max=20000, tries_to_adjust=2)
+
+    else:
+        #Terrestial planet
+        craterization = rand_range(0, 10, 3, 1)
+
+        if radius < 2.2:
+            surface_ocean_amount = rand_range(0, 1, 2, 0.9)
+
+            ice_amount_total = rand_range(0, 1, 4, 0.1)
+            if surface_temp_low > 0:
+                ice_amount_total = 0
+            else:
+                ice_amount_total = bigger_makes_smaller(start=ice_amount_total, start_min=-200, start_max=400,
+                                                        end_min=0, end_max=1, tries_to_adjust=2)
+                ice_amount_north_pole = rand_range(0, ice_amount_total, 2, 0.01)
+                ice_space_left = ice_amount_total - ice_amount_north_pole
+                ice_amount_south_pole = rand_range(0, ice_space_left, 2, 0.01)
+                ice_amount_total = ice_amount_total - ice_amount_south_pole
+
+        surface_solidity = 1
+        ring_size = 0
+        ring_numbers = 0
+        atmosphere_millibars = bigger_makes_bigger(start=gravity, start_min=0.01, start_max=5,
+                                                   end=1, end_min=0.1, end_max=50, tries_to_adjust=2)
+        magnetic_field = bigger_makes_bigger(start=mass, start_min=0.01, start_max=mass_max,
+                                             end=1, end_min=0.1, end_max=100, tries_to_adjust=2)
+
+    mineral_surface_early = rand_range(0, 0.95, 3, 0.9)
+    space_left = 1 - mineral_surface_early
+    mineral_surface_mid = rand_range(0, space_left, 1, space_left)
+    space_left = 1 - mineral_surface_early + mineral_surface_mid
+    mineral_surface_heavy = rand_range(0, space_left, 1, space_left)
+    space_left = 1 - mineral_surface_early + mineral_surface_mid + mineral_surface_heavy
+    mineral_surface_late = space_left
+    minerals_specific = pick_random_minerals()
+
+    solid_core_size = rand_range(0, 1, 2, .3)
+    solid_core_type = 'Iron'
+    plate_tectonics_amount = rand_range(0, 30, 2, 1)
+    surface_ocean_chemicals = 'Salt Water'
+
+    atmosphere_dust_amount = 0
+    if surface_solidity > .9:
+        atmosphere_dust_amount = int(rand_range(1, 1000, 5, 10))
+
+    num_moons_max = 1 + (planet_num * 4)
+    if planet_num > 6:
+        num_moons_max = 1 + (planet_num * 2)
+
+    num_moons = rand_range(0, num_moons_max, 7, 0)
+    num_moons = bigger_makes_bigger(start=gravity, start_min=0.1, start_max=5,
+                                    end=num_moons, end_min=0, end_max=num_moons_max, tries_to_adjust=1)
+    num_moons = int(num_moons)
+
+    rand_seed_planet = "{0}00{1}".format(int(rand_seed), planet_num)
+
+    planet_data = {'name': name, 'position': planet_num, 'mass': mass, 'radius': radius,
+                   'density': density, 'gravity': gravity, 'oblateness': oblateness,
+                   'tilt': tilt, 'albedo': albedo, 'magnetic_field': magnetic_field,
+                   'craterization': craterization, 'surface_solidity': surface_solidity,
+                   'surface_ocean_amount': surface_ocean_amount,
+
+                   'ice_total': ice_amount_total,
+                   'ice_north_pole': ice_amount_north_pole,
+                   'ice_south_pole': ice_amount_south_pole,
+                   'atmosphere_millibars': atmosphere_millibars, 'solid_core_size': solid_core_size,
+                   'solid_core_type': solid_core_type, 'plate_tectonics_amount': plate_tectonics_amount,
+                   'surface_ocean_chemicals': surface_ocean_chemicals, 'ring_size': ring_size,
+                   'ring_numbers': ring_numbers, 'length_days': length_days,
+                   'surface_temp_low': surface_temp_low,
+                   'surface_temp_high': surface_temp_high,
+
+                   'atmosphere_dust_amount': atmosphere_dust_amount,
+
+                   'mineral_surface_early': mineral_surface_early,
+                   'mineral_surface_mid': mineral_surface_mid,
+                   'mineral_surface_heavy': mineral_surface_heavy,
+                   'mineral_surface_late': mineral_surface_late,
+                   'minerals_specific': minerals_specific,
+
+                   'num_moons': num_moons, 'rand_seed': rand_seed_planet,
+                   }
+    for v in planet_data:
+        if type(planet_data[v]) == float:
+            planet_data[v] = round(planet_data[v] * 1000) / 1000
+
+    moon_name_list = list_of_names()
+    moons = []
+    for i in range(num_moons):
+        moon_data = create_random_moon(planet_data, i, moon_name_list)
+        moons.append(moon_data)
+    planet_data['moons'] = moons
+
+    return planet_data
+
+
+def create_random_moon(planet_data, moon_num, moon_name_list):
+    if len(moon_name_list) > moon_num:
+        name = moon_name_list[moon_num]
+    else:
+        name = "Moon {0}".format(moon_num)
+
+    r = lambda: np.random.randint(0, 255)
+    color = '#%02X%02X%02X' % (r(), r(), r())
+
+    return {'name': name, 'moon_num': moon_num, 'color':color}
+
+
+def pick_random_minerals():
+    mineral_list = "Iron Carbon Lithium Strontium Calcium Hydrogen Sodium Barium Boron Helium Nitrogen Oxygen "
+    mineral_list += "Phosphorus Zinc Lead Copper Arsenic Cesium Indium Gold Silver"
+    mineral_list = mineral_list.split()
+
+    minerals = []
+    mineral_count = randint(4, 8)
+    for i in range(mineral_count):
+        min_num = randint(0, len(mineral_list))
+        mineral = mineral_list[min_num]
+        minerals.append(mineral)
+
+    minerals = " ".join(minerals)
+
+    return minerals
+
+import numpy as np
+from django.http import HttpResponse
+import re
+
+#--- Mathy functions for planetary things ----------------
+
+
+def rand_range(low=0, high=1, weight=1, avg=0.5):
+
+    if low == 0 and high == 1:
+        return rand_weighted(avg, weight)
+
+    #convert numbers to 0 - 1
+    num_range = high-low
+    if num_range <= 0:
+        num_range = 1
+    new_avg = (avg-low) / num_range
+
+    rand = rand_weighted(new_avg, weight)
+
+    rand = low + (num_range*rand)
+    return rand
+
+
+def rand_range_from_text(rand_text=""):
+    if rand_text:
+        parts = re.findall(r'([0-9.]*)[ -]*([0-9.]*)', str(rand_text))
+        if parts and len(parts) > 0 and len(parts[0]) > 0:
+            low = parse_num(parts[0][0])
+            high = parse_num(parts[0][1])
+            if low:
+                if high:
+                    return rand_range(low, high, 2)
+                else:
+                    return rand_range(low*0.5, low*1.5, 3)
+    return rand_range()
+
+
+def rand_weighted(midpoint=0.5, weight=3):
+    """
+    Returns a random number between 0 and 1, weighted to be closer to 'goal'.
+    'weight' determines how heavily the number is weighted towards the goal.
+
+    Note that the entire returned range will be 0 < x < 1, but that multiple
+    returns averaged together will be closer to .5 (so 1000 tries at midpoint
+    .9 will average to .75, not to .9... even though higher ones are returned)
+    """
+
+    closest = np.random.sample()
+    for x in range(0, int(weight)-1):
+        tempnum = np.random.sample()
+        if is_x_closer_to_mid_then_y(tempnum, closest, midpoint):
+            closest = tempnum
+    return closest
+
+
+def is_x_closer_to_mid_then_y(x, y, mid):
+    mid_to_x = abs(mid-x)
+    mid_to_y = abs(mid-y)
+
+    is_x_closer = False
+    if mid_to_x < mid_to_y:
+        is_x_closer = True
+    return is_x_closer
+
+
+def image_histogram_from_array(request, list_to_plot, bins=50):
+    from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+    import matplotlib.pyplot as plot
+
+    list_to_plot.sort()
+    plot.hist(list_to_plot, bins=bins, normed=1)
+    canvas = FigureCanvas(plot.figure(1))
+
+    response = HttpResponse(content_type='image/png')
+    canvas.print_png(response)
+    plot.clf()
+
+    return response
+
+
+def parse_int(str):
+    import re
+    return int(re.match(r'\d+', str).group())
+
+
+def parse_num(s, force_int=False):
+    try:
+        return int(s)
+    except ValueError:
+        if force_int:
+            return 0
+        try:
+            return float(s)
+        except Exception:
+            return 0
+
+
+def average_numbers_clamped(num_1=0, num_2=0):
+    if num_1 and not num_2:
+        return num_1
+    if num_2 and not num_1:
+        return num_2
+    return float((num_1+num_2) / 2)
+
+
+def clamp(value, v_min=0, v_max=1):
+    if value < v_min:
+        return v_min
+    if value > v_max:
+        return v_max
+    return value
+
+
+def bigger_makes_smaller(start=5, start_min=0, start_max=8, end=5000, end_min=1, end_max=12000, tries_to_adjust=2):
+    # Used to inversely correlate two variables within a range
+    # For example, the bigger stars are usually younger (as they'd burn out quicker)
+    #   so if start is higher than average and end is higher than average, make end lower
+
+    start_pct = clamp(float(start-start_min) / float(start_max-start_min), 0, 1)
+    end_pct = clamp(float(end-end_min) / float(end_max-end_min), 0, 1)
+
+    end_pct_guessed = rand_range(low=0, high=1, weight=tries_to_adjust, avg=(1-start_pct))
+    end_pct = average_numbers_clamped(end_pct, end_pct_guessed)
+
+    new_end = (end_pct * (end_max-end_min)) + end_min
+    return new_end
+
+
+def bigger_makes_bigger(start=5, start_min=0, start_max=10, end=5, end_min=0, end_max=10, tries_to_adjust=2):
+    start_pct = clamp((start-start_min) / (start_max-start_min))
+    end_pct = clamp((end-end_min) / (end_max-end_min))
+
+    end_pct_guessed = rand_range(low=0, high=1, weight=tries_to_adjust, avg=start_pct)
+    end_pct = average_numbers_clamped(end_pct, end_pct_guessed)
+
+    new_end = (end_pct * (end_max-end_min)) + end_min
+    return new_end
+
+
+def get_float_from_hash(options={}, var_name='', backup_val=0):
+    try:
+        val = float(options.get(var_name))
+    except Exception:
+        val = backup_val
+    return val
+[
+{
+  "pk": 1,
+  "model": "starcatalog.starluminositytype",
+  "fields": {
+    "short_name": "Hypergiant",
+    "symbol": "0",
+    "mass_range": "40 - 60",
+    "magnitude_range": "-19 - -7",
+    "radius_range": "1000 - 1500",
+    "temp_range": "8000"
+  }
+},
+{
+  "pk": 2,
+  "model": "starcatalog.starluminositytype",
+  "fields": {
+    "short_name": "Supergiant",
+    "symbol": "I",
+    "mass_range": "8 - 12",
+    "magnitude_range": "-5 - -12",
+    "radius_range": "30 - 1000",
+    "temp_range": "3500 - 20000"
+  }
+},
+{
+  "pk": 3,
+  "model": "starcatalog.starluminositytype",
+  "fields": {
+    "short_name": "Bright giant",
+    "symbol": "II",
+    "mass_range": "6 - 12",
+    "magnitude_range": "-3 - -5",
+    "radius_range": "50 - 700",
+    "temp_range": ""
+  }
+},
+{
+  "pk": 4,
+  "model": "starcatalog.starluminositytype",
+  "fields": {
+    "short_name": "Giant",
+    "symbol": "III",
+    "mass_range": ".25 - 12",
+    "magnitude_range": "1 - -3",
+    "radius_range": "100 - 300",
+    "temp_range": ""
+  }
+},
+{
+  "pk": 5,
+  "model": "starcatalog.starluminositytype",
+  "fields": {
+    "short_name": "Subgiant",
+    "symbol": "IV",
+    "mass_range": "",
+    "magnitude_range": "5 - 0",
+    "radius_range": "",
+    "temp_range": ""
+  }
+},
+{
+  "pk": 6,
+  "model": "starcatalog.starluminositytype",
+  "fields": {
+    "short_name": "Main Sequence Star",
+    "symbol": "V",
+    "mass_range": "",
+    "magnitude_range": "",
+    "radius_range": "",
+    "temp_range": ""
+  }
+},
+{
+  "pk": 7,
+  "model": "starcatalog.starluminositytype",
+  "fields": {
+    "short_name": "Subdwarf",
+    "symbol": "VI",
+    "mass_range": "",
+    "magnitude_range": "5-10",
+    "radius_range": "",
+    "temp_range": ""
+  }
+},
+{
+  "pk": 8,
+  "model": "starcatalog.starluminositytype",
+  "fields": {
+    "short_name": "White Dwarf",
+    "symbol": "VII",
+    "mass_range": ".17 - 1.33",
+    "magnitude_range": "",
+    "radius_range": "0.008 - 0.02",
+    "temp_range": "8000 - 40000"
+  }
+}
+]
+
+def set_rand_seed(rand_seed=4815162342):
+    try:
+        rand_seed = float(rand_seed)
+    except Exception as e:
+        rand_seed = int(np.random.random() * 100000000)
+    rand_seed_num = rand_seed
+    if rand_seed < 1:
+        rand_seed_num = rand_seed * 100000000
+
+    try:
+        rand_seed_num = int(rand_seed_num)
+        np.random.seed(rand_seed_num)
+    except ValueError as e:
+        rand_seed_num = int(np.random.random() * 100000000)
+        np.random.seed(rand_seed_num)
+
+    return rand_seed_num
+
+
+def randint(low, high):
+    if low >= high:
+        return high
+    return np.random.randint(low, high)
+</div>
 </body>
 </html>
