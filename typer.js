@@ -5,11 +5,10 @@ var typer = {
     textHolder: null,
     sentences_on_bottom: [],
     sentence_current:"",
-    time_between_chars: 4,
-    time_between_words: 8,
-    chance_of_misspell: 0.02,
-    current_top:0,
-    top_cell_height: 14
+    time_between_chars: 8,
+    time_between_words: 15,
+    chance_of_misspell: 0.015,
+    current_top:0
 };
 
 typer.init = function(){
@@ -109,10 +108,10 @@ typer.get_delay_time = function(char){
 typer.make_top_cells_smaller_font = function(){
     var currSize = parseInt(typer.topCells[0].css('fontSize'));
     var newSize = currSize-1;
+    if (newSize < 2) return;
     _.each(typer.topCells, function($cell,i){
         $cell.css('fontSize',newSize);
     });
-    typer.top_cell_height+=2;
 };
 typer.add_char = function(w){
     var t = typer.bottomCell.html() || "";
@@ -126,14 +125,19 @@ typer.add_char = function(w){
         if (rowCount > 20) {
             var topLine = typer.sentences_on_bottom[0];
             typer.sentences_on_bottom = typer.sentences_on_bottom.slice(1);
-            var html = typer.topCells[typer.current_top].html();
-            typer.topCells[typer.current_top].html(html+topLine);
+            var currTop = typer.topCells[typer.current_top];
 
-            rows = html.split("<br>");
-            rowCount = 0;
-            if (rows && rows.length) rowCount = rows.length;
+            var html = currTop.html();
+            currTop.html(html+topLine);
 
-            if (rowCount > typer.top_cell_height) {
+            var currTopHeight = currTop.height();
+
+//            rows = html.split("<br>");
+//            rowCount = 0;
+//            if (rows && rows.length) rowCount = rows.length;
+//
+//            if (rowCount > typer.top_cell_height) {
+            if (currTopHeight > 200) {
                 typer.current_top++;
                 if (typer.current_top>=typer.topCells.length) {
                     typer.addTopCell();
