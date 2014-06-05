@@ -5,8 +5,8 @@ var typer = {
     textHolder: null,
     sentences_on_bottom: [],
     sentence_current:"",
-    time_between_chars: 15,
-    time_between_words: 50,
+    time_between_chars: 46,
+    time_between_words: 100,
     chance_of_misspell: 0.015,
     starting_text: "ENTER any text to fake type here, or click button below to use space sample",
     current_top:0
@@ -110,6 +110,7 @@ typer.add_char_from_text = function(){
                setTimeout(function(){typer.add_char_from_text()},time_to_delay*4);
             },time_to_delay*2);
         } else {
+            //Not misspelled, add normally
             typer.text_to_add = typer.text_to_add.substr(charSize);
             typer.add_char(char);
             setTimeout(function(){typer.add_char_from_text()},time_to_delay);
@@ -120,9 +121,9 @@ typer.add_char_from_text = function(){
             //Text finished drawing
             var end = new Date().getTime();
             var time = end - typer.start_timer;
-            time = time / 1000;
+            time = parseInt(time / (1000 * 6))/10;
             typer.start_timer = null;
-            $("#type_on").val("Type This - Last took: "+time+" seconds");
+            $("#type_on").val("Type This - Last took: "+time+" minutes");
         }
     }
 };
@@ -138,7 +139,6 @@ typer.get_delay_time = function(char){
     } else {
         spacing = typer.time_between_chars;
     }
-
     return parseInt((spacing *.25) + (Math.random()*(spacing *.75)));
 };
 typer.add_char = function(w){
@@ -173,8 +173,8 @@ typer.add_char = function(w){
 
                 var end = new Date().getTime();
                 var time = end - typer.start_timer;
-                time = time / 1000;
-                $("#type_on").val("Typing - So Far: "+time+" seconds");
+                time = parseInt(time / (1000 * 6))/10;
+                $("#type_on").val("Typing - So Far: "+time+" minutes");
             }
 
         }
